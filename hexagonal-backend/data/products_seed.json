@@ -1,0 +1,10 @@
+[
+  { "product_id": 101, "name": "Keyboard Mechanical", "category": "peripheral", "price": 750000, "active": true },
+  { "product_id": 102, "name": "Mouse Wireless", "category": "peripheral", "price": 250000, "active": true },
+  { "product_id": 103, "name": "Monitor 24 Inch", "category": "display", "price": 1750000, "active": true },
+  { "product_id": 104, "name": "USB Hub", "category": "accessory", "price": 150000, "active": true },
+  { "product_id": 105, "name": "Laptop Stand", "category": "accessory", "price": 200000, "active": true },
+  { "product_id": 106, "name": "Webcam Full HD", "category": "camera", "price": 450000, "active": true },
+  { "product_id": 107, "name": "Headset Wireless", "category": "audio", "price": 550000, "active": true },
+  { "product_id": 108, "name": "SSD 1TB", "category": "storage", "price": 1100000, "active": true }
+]
