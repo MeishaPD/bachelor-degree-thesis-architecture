@@ -12,12 +12,14 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/shirou/gopsutil/v4/process"
@@ -30,6 +32,10 @@ type ArchConfig struct {
 	PprofAddr string
 	Workdir   string
 	Binary    string
+
+	RemoteWorkDir   string
+	RemoteBinary    string
+	RemotePprofAddr string
 }
 
 type RunnerConfig struct {
@@ -52,6 +58,15 @@ type RunnerConfig struct {
 	DBCustomerCount     int
 	SleepBetweenRequest string
 	BuildBackends       bool
+	Remote              bool
+	VMUser              string
+	VMHost              string
+	VMRoot              string
+	VMResultDir         string
+	RemoteRunner        string
+	SSHKey              string
+	MonitorPID          int
+	MonitorOut          string
 
 	// pprof
 	ProfileDuration       string
@@ -122,6 +137,20 @@ type ResourceMonitor struct {
 
 	mu      sync.Mutex
 	samples []ResourceSample
+}
+
+type RemoteBackendProcess struct {
+	Architecture string
+	PID          int
+	PIDPath      string
+	LogPath      string
+}
+
+type RemoteMonitorProcess struct {
+	PID     int
+	PIDPath string
+	OutPath string
+	LogPath string
 }
 
 type ResultRow map[string]string
@@ -207,6 +236,13 @@ func main() {
 		fatal(err)
 	}
 
+	if cfg.Mode == "monitor" {
+		if err := runMonitorMode(cfg); err != nil {
+			fatal(err)
+		}
+		return
+	}
+
 	archs := buildArchConfigs(cfg)
 	if err := ensureDirs(cfg); err != nil {
 		fatal(err)
@@ -242,6 +278,39 @@ func main() {
 	fmt.Println("Raw k6:", filepath.Join(cfg.Resultdir, "raw_k6"))
 	fmt.Println("Raw resource:", filepath.Join(cfg.Resultdir, "raw_resource"))
 	fmt.Println(strings.Repeat("=", 100))
+}
+
+func runMonitorMode(cfg RunnerConfig) error {
+	if cfg.MonitorPID <= 0 {
+		return errors.New("-monitor-pid must be greater than 0")
+	}
+
+	if strings.TrimSpace(cfg.MonitorOut) == "" {
+		return errors.New("-monitor-out is required")
+	}
+
+	if err := os.MkdirAll(filepath.Dir(cfg.MonitorOut), 0755); err != nil {
+		return err
+	}
+
+	monitor, err := NewResourceMonitor(int32(cfg.MonitorPID), cfg.MonitorInterval, cfg.MonitorOut)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("[MONITOR] pid=%d | interval=%s | out=%s\n", cfg.MonitorPID, cfg.MonitorInterval, cfg.MonitorOut)
+
+	monitor.Start()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
+	<-sigCh
+
+	fmt.Println("[MONITOR] stopping...")
+	monitor.Stop()
+	fmt.Println("[MONITOR] stopped")
+
+	return nil
 }
 
 func runBenchmark(cfg RunnerConfig, archs map[string]ArchConfig) {
@@ -341,6 +410,16 @@ func parseConfig() (RunnerConfig, error) {
 	profileVUS := flag.String("profile-vus", "50,100", "Comma-separated list of VUS for profiling mode")
 	profileEndpoints := flag.String("profile-endpoints", "ping,pricing,summary", "Comma-separated list of endpoints for profiling mode")
 
+	remote := flag.Bool("remote", false, "Run benchmark on remote VM via SSH")
+	vmUser := flag.String("vm-user", envOrDefault("VM_USER", "sandbox"), "SSH user for remote VM")
+	vmHost := flag.String("vm-host", envOrDefault("VM_HOST", ""), "VM host-only IP address")
+	vmRoot := flag.String("vm-root", envOrDefault("VM_ROOT", "/home/sandbox/thesis-go-architecture-refactored"), "Root directory of the project on remote VM")
+	vmResultDir := flag.String("vm-result-dir", envOrDefault("VM_RESULT_DIR", "/home/sandbox/thesis-go-architecture-refactored/results"), "Result directory on remote VM")
+	remoteRunner := flag.String("remote-runner", envOrDefault("REMOTE_RUNNER", "/home/sandbox/thesis-go-architecture-refactored/bin/benchmark-runner"), "Path to benchmark-runner binary on remote VM")
+	sshKey := flag.String("ssh-key", envOrDefault("SSH_KEY", ""), "Optional SSH private key path")
+	monitorPID := flag.Int("monitor-pid", 0, "PID to monitor when running -mode monitor")
+	monitorOut := flag.String("monitor-out", "", "Output CSV file for resource monitor")
+
 	flag.Parse()
 
 	absRoot, err := filepath.Abs(*root)
@@ -349,12 +428,22 @@ func parseConfig() (RunnerConfig, error) {
 	}
 
 	selectedMode := strings.ToLower(strings.TrimSpace(*mode))
-	if selectedMode != "benchmark" && selectedMode != "profile" && selectedMode != "all" {
-		return RunnerConfig{}, fmt.Errorf("invalid -mode %q; use benchmark, profile, or all", *mode)
+	if selectedMode != "benchmark" && selectedMode != "profile" && selectedMode != "all" && selectedMode != "monitor" {
+		return RunnerConfig{}, fmt.Errorf("invalid -mode %q; use benchmark, profile, all, or monitor", *mode)
 	}
 
-	if strings.TrimSpace(*databaseURL) == "" {
+	if selectedMode != "monitor" && strings.TrimSpace(*databaseURL) == "" {
 		return RunnerConfig{}, errors.New("Use -database-url flag or set DATABASE_URL env")
+	}
+
+	if *remote {
+		if strings.TrimSpace(*vmUser) == "" {
+			return RunnerConfig{}, errors.New("Use -vm-user flag or set VM_USER env")
+		}
+
+		if strings.TrimSpace(*vmHost) == "" {
+			return RunnerConfig{}, errors.New("Use -vm-host flag or set VM_HOST env")
+		}
 	}
 
 	vusList, err := parseIntList(*vus)
@@ -406,6 +495,15 @@ func parseConfig() (RunnerConfig, error) {
 		ProfileRepetitions:    *profileRepetitions,
 		ProfileVUSList:        profileVUSList,
 		ProfileEndpoints:      profileEndpointList,
+		Remote:                *remote,
+		VMUser:                *vmUser,
+		VMHost:                *vmHost,
+		VMRoot:                *vmRoot,
+		VMResultDir:           *vmResultDir,
+		RemoteRunner:          *remoteRunner,
+		SSHKey:                *sshKey,
+		MonitorPID:            *monitorPID,
+		MonitorOut:            *monitorOut,
 	}, nil
 }
 
@@ -417,22 +515,35 @@ func buildArchConfigs(cfg RunnerConfig) map[string]ArchConfig {
 
 	binDir := filepath.Join(cfg.Rootdir, "bin")
 
+	hostForURL := "localhost"
+	if cfg.Remote {
+		hostForURL = cfg.VMHost
+	}
+
 	return map[string]ArchConfig{
 		"layered": {
 			Name:      "layered",
-			BaseURL:   "http://localhost:8081",
+			BaseURL:   fmt.Sprintf("http://%s:8081", hostForURL),
 			Port:      "8081",
-			PprofAddr: "localhost:6061",
+			PprofAddr: fmt.Sprintf("%s:6061", hostForURL),
 			Workdir:   filepath.Join(cfg.Rootdir, "layered-backend"),
 			Binary:    filepath.Join(binDir, "layered-backend"+exeExt),
+
+			RemoteWorkDir:   remotePathJoin(cfg.VMRoot, "layered-backend"),
+			RemoteBinary:    remotePathJoin(cfg.VMRoot, "bin", "layered-backend"),
+			RemotePprofAddr: "0.0.0.0:6061",
 		},
 		"hexagonal": {
 			Name:      "hexagonal",
-			BaseURL:   "http://localhost:8082",
+			BaseURL:   fmt.Sprintf("http://%s:8082", hostForURL),
 			Port:      "8082",
-			PprofAddr: "localhost:6062",
+			PprofAddr: fmt.Sprintf("%s:6062", hostForURL),
 			Workdir:   filepath.Join(cfg.Rootdir, "hexagonal-backend"),
 			Binary:    filepath.Join(binDir, "hexagonal-backend"+exeExt),
+
+			RemoteWorkDir:   remotePathJoin(cfg.VMRoot, "hexagonal-backend"),
+			RemoteBinary:    remotePathJoin(cfg.VMRoot, "bin", "hexagonal-backend"),
+			RemotePprofAddr: "0.0.0.0:6062",
 		},
 	}
 }
@@ -482,6 +593,10 @@ func buildBackend(arch ArchConfig) error {
 }
 
 func runMeasuredCondition(cfg RunnerConfig, arch ArchConfig, endpoint string, vus int, repetition int) ResultRow {
+	if cfg.Remote {
+		return runMeasuredConditionRemote(cfg, arch, endpoint, vus, repetition)
+	}
+
 	backend, err := startBackend(cfg, arch)
 	if err != nil {
 		return ResultRow{
@@ -808,6 +923,124 @@ func waitForBackend(url string, timeout time.Duration) error {
 	}
 
 	return lastErr
+}
+
+func startBackendRemote(cfg RunnerConfig, arch ArchConfig) (*RemoteBackendProcess, error) {
+	pidDir := remotePathJoin(cfg.VMResultDir, "pids")
+	logDir := remotePathJoin(cfg.VMResultDir, "backend_logs")
+
+	pidPath := remotePathJoin(pidDir, arch.Name+"_backend.pid")
+	logPath := remotePathJoin(logDir, arch.Name+"_backend.log")
+
+	cmd := strings.Join([]string{
+		"mkdir -p " + shQuote(pidDir) + " " + shQuote(logDir),
+		"if [ -f " + shQuote(pidPath) + " ]; then kill $(cat " + shQuote(pidPath) + ") 2>/dev/null || true; rm -f " + shQuote(pidPath) + "; fi",
+		"cd " + shQuote(arch.RemoteWorkDir),
+		"env " +
+			"PORT=" + shQuote(arch.Port) + " " +
+			"PPROF_ADDR=" + shQuote(arch.RemotePprofAddr) + " " +
+			"DATABASE_URL=" + shQuote(cfg.DatabaseURL) + " " +
+			"PRODUCT_SEED_PATH=" + shQuote(cfg.ProductSeedPath) + " " +
+			"nohup " + shQuote(arch.RemoteBinary) + " > " + shQuote(logPath) + " 2>&1 < /dev/null & echo $! > " + shQuote(pidPath),
+		"sleep 0.3",
+		"cat " + shQuote(pidPath),
+	}, " && ")
+
+	out, err := runSSH(cfg, cmd)
+	if err != nil {
+		return nil, err
+	}
+
+	pidText := strings.TrimSpace(out)
+	pid, err := strconv.Atoi(pidText)
+	if err != nil {
+		return nil, fmt.Errorf("invalid remote backend PID %q: %w", pidText, err)
+	}
+
+	return &RemoteBackendProcess{
+		Architecture: arch.Name,
+		PID:          pid,
+		PIDPath:      pidPath,
+		LogPath:      logPath,
+	}, nil
+}
+
+func stopBackendRemote(cfg RunnerConfig, bp *RemoteBackendProcess) {
+	if bp == nil {
+		return
+	}
+
+	cmd := strings.Join([]string{
+		"if [ -f " + shQuote(bp.PIDPath) + " ]; then kill $(cat " + shQuote(bp.PIDPath) + ") 2>/dev/null || true; rm -f " + shQuote(bp.PIDPath) + "; fi",
+	}, " ")
+
+	if out, err := runSSH(cfg, cmd); err != nil {
+		fmt.Println("[WARN] stop remote backend failed:", err)
+		if strings.TrimSpace(out) != "" {
+			fmt.Println(out)
+		}
+	}
+}
+
+func startRemoteMonitor(cfg RunnerConfig, backendPID int, remoteOutPath string, archName string) (*RemoteMonitorProcess, error) {
+	pidDir := remotePathJoin(cfg.VMResultDir, "pids")
+	logDir := remotePathJoin(cfg.VMResultDir, "monitor_logs")
+
+	pidPath := remotePathJoin(pidDir, archName+"_monitor.pid")
+	logPath := remotePathJoin(logDir, archName+"_monitor.log")
+
+	cmd := strings.Join([]string{
+		"mkdir -p " + shQuote(pidDir) + " " + shQuote(logDir) + " " + shQuote(filepathDirRemote(remoteOutPath)),
+		"if [ -f " + shQuote(pidPath) + " ]; then kill $(cat " + shQuote(pidPath) + ") 2>/dev/null || true; rm -f " + shQuote(pidPath) + "; fi",
+		"nohup " + shQuote(cfg.RemoteRunner) +
+			" -mode monitor" +
+			" -monitor-pid " + strconv.Itoa(backendPID) +
+			" -monitor-out " + shQuote(remoteOutPath) +
+			" -monitor-interval " + shQuote(cfg.MonitorInterval.String()) +
+			" > " + shQuote(logPath) + " 2>&1 < /dev/null & echo $! > " + shQuote(pidPath),
+		"sleep 0.3",
+		"cat " + shQuote(pidPath),
+	}, " && ")
+
+	out, err := runSSH(cfg, cmd)
+	if err != nil {
+		return nil, err
+	}
+
+	pidText := strings.TrimSpace(out)
+	pid, err := strconv.Atoi(pidText)
+	if err != nil {
+		return nil, fmt.Errorf("invalid remote monitor PID %q: %w", pidText, err)
+	}
+
+	return &RemoteMonitorProcess{
+		PID:     pid,
+		PIDPath: pidPath,
+		OutPath: remoteOutPath,
+		LogPath: logPath,
+	}, nil
+}
+
+func stopRemoteMonitor(cfg RunnerConfig, mp *RemoteMonitorProcess) {
+	if mp == nil {
+		return
+	}
+
+	cmd := strings.Join([]string{
+		"if [ -f " + shQuote(mp.PIDPath) + " ]; then",
+		"kill -INT $(cat " + shQuote(mp.PIDPath) + ") 2>/dev/null || true;",
+		"sleep 1;",
+		"kill -TERM $(cat " + shQuote(mp.PIDPath) + ") 2>/dev/null || true;",
+		"rm -f " + shQuote(mp.PIDPath) + ";",
+		"fi",
+	}, " ")
+
+	if out, err := runSSH(cfg, cmd); err != nil {
+		fmt.Println("[WARN] stop remote monitor failed:", err)
+		if strings.TrimSpace(out) != "" {
+			fmt.Println(out)
+		}
+	}
 }
 
 func runK6(cfg RunnerConfig, arch ArchConfig, endpoint string, vus int, repetition int, duration string, label string) ResultRow {
@@ -1267,6 +1500,208 @@ func fetchURLToFile(url string, outPath string, timeout time.Duration) error {
 	return err
 }
 
+func readResourceSummaryFromCSV(path string) (ResourceSum, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return ResourceSum{}, err
+	}
+	defer file.Close()
+
+	reader := csv.NewReader(file)
+
+	records, err := reader.ReadAll()
+	if err != nil {
+		return ResourceSum{}, err
+	}
+
+	if len(records) < 2 {
+		return ResourceSum{}, errors.New("resource CSV has no samples")
+	}
+
+	header := records[0]
+	col := map[string]int{}
+
+	for i, name := range header {
+		col[name] = i
+	}
+
+	required := []string{"cpu_percent", "rss_mb", "vms_mb", "num_threads"}
+	for _, name := range required {
+		if _, ok := col[name]; !ok {
+			return ResourceSum{}, fmt.Errorf("resource CSV missing column %q", name)
+		}
+	}
+
+	cpu := []float64{}
+	rss := []float64{}
+	vms := []float64{}
+	threads := []float64{}
+
+	var maxThreads int32
+
+	for _, record := range records[1:] {
+		cpuVal, _ := strconv.ParseFloat(record[col["cpu_percent"]], 64)
+		rssVal, _ := strconv.ParseFloat(record[col["rss_mb"]], 64)
+		vmsVal, _ := strconv.ParseFloat(record[col["vms_mb"]], 64)
+		threadVal, _ := strconv.ParseFloat(record[col["num_threads"]], 64)
+
+		cpu = append(cpu, cpuVal)
+		rss = append(rss, rssVal)
+		vms = append(vms, vmsVal)
+		threads = append(threads, threadVal)
+
+		if int32(threadVal) > maxThreads {
+			maxThreads = int32(threadVal)
+		}
+	}
+
+	return ResourceSum{
+		Samples: len(cpu),
+
+		CPUAvg:    mean(cpu),
+		CPUMed:    median(cpu),
+		CPUStdDev: stddev(cpu),
+		CPUMin:    min(cpu),
+		CPUMax:    max(cpu),
+
+		RSSAvg:    mean(rss),
+		RSSMed:    median(rss),
+		RSSStdDev: stddev(rss),
+		RSSMin:    min(rss),
+		RSSMax:    max(rss),
+
+		VMSAvg:    mean(vms),
+		VMSMed:    median(vms),
+		VMSStdDev: stddev(vms),
+		VMSMin:    min(vms),
+		VMSMax:    max(vms),
+
+		ThreadsAvg: mean(threads),
+		ThreadsMax: maxThreads,
+	}, nil
+}
+
+func runMeasuredConditionRemote(cfg RunnerConfig, arch ArchConfig, endpoint string, vus int, repetition int) ResultRow {
+	backend, err := startBackendRemote(cfg, arch)
+	if err != nil {
+		return ResultRow{
+			"pair_id":      pairID(endpoint, vus, repetition),
+			"architecture": arch.Name,
+			"endpoint":     endpoint,
+			"vus":          strconv.Itoa(vus),
+			"duration":     cfg.Duration,
+			"repetition":   strconv.Itoa(repetition),
+			"status":       "remote_backend_start_failed: " + err.Error(),
+			"base_url":     arch.BaseURL,
+		}
+	}
+
+	defer func() {
+		stopBackendRemote(cfg, backend)
+		time.Sleep(cfg.Cooldown)
+	}()
+
+	if err := waitForBackend(arch.BaseURL+"/ping", cfg.BackendStartTimeout); err != nil {
+		return ResultRow{
+			"pair_id":      pairID(endpoint, vus, repetition),
+			"architecture": arch.Name,
+			"endpoint":     endpoint,
+			"vus":          strconv.Itoa(vus),
+			"duration":     cfg.Duration,
+			"repetition":   strconv.Itoa(repetition),
+			"status":       "backend_healthcheck_failed: " + err.Error(),
+			"base_url":     arch.BaseURL,
+			"backend_pid":  strconv.Itoa(backend.PID),
+		}
+	}
+
+	fmt.Printf("[REMOTE BACKEND] %s running | pid=%d | base_url=%s\n", arch.Name, backend.PID, arch.BaseURL)
+
+	_ = runK6(cfg, arch, endpoint, vus, repetition, cfg.WarmupDuration, "warmup")
+
+	baseName := fmt.Sprintf(
+		"%s_%s_%s_vu%d_rep%d_resource.csv",
+		timestamp(),
+		arch.Name,
+		endpoint,
+		vus,
+		repetition,
+	)
+
+	localResourceFile := filepath.Join(cfg.Resultdir, "raw_resource", baseName)
+	remoteResourceFile := remotePathJoin(cfg.VMResultDir, "raw_resource", baseName)
+
+	monitor, err := startRemoteMonitor(cfg, backend.PID, remoteResourceFile, arch.Name)
+	if err != nil {
+		return ResultRow{
+			"pair_id":      pairID(endpoint, vus, repetition),
+			"architecture": arch.Name,
+			"endpoint":     endpoint,
+			"vus":          strconv.Itoa(vus),
+			"duration":     cfg.Duration,
+			"repetition":   strconv.Itoa(repetition),
+			"status":       "remote_resource_monitor_failed: " + err.Error(),
+			"base_url":     arch.BaseURL,
+			"backend_pid":  strconv.Itoa(backend.PID),
+		}
+	}
+
+	k6Result := runK6(cfg, arch, endpoint, vus, repetition, cfg.Duration, "measured")
+
+	stopRemoteMonitor(cfg, monitor)
+
+	if err := runSCPFromVM(cfg, remoteResourceFile, localResourceFile); err != nil {
+		return ResultRow{
+			"pair_id":           pairID(endpoint, vus, repetition),
+			"architecture":      arch.Name,
+			"endpoint":          endpoint,
+			"vus":               strconv.Itoa(vus),
+			"duration":          cfg.Duration,
+			"repetition":        strconv.Itoa(repetition),
+			"status":            "resource_scp_failed: " + err.Error(),
+			"base_url":          arch.BaseURL,
+			"backend_pid":       strconv.Itoa(backend.PID),
+			"resource_raw_file": localResourceFile,
+		}
+	}
+
+	resourceSummary, err := readResourceSummaryFromCSV(localResourceFile)
+	if err != nil {
+		return ResultRow{
+			"pair_id":           pairID(endpoint, vus, repetition),
+			"architecture":      arch.Name,
+			"endpoint":          endpoint,
+			"vus":               strconv.Itoa(vus),
+			"duration":          cfg.Duration,
+			"repetition":        strconv.Itoa(repetition),
+			"status":            "resource_summary_failed: " + err.Error(),
+			"base_url":          arch.BaseURL,
+			"backend_pid":       strconv.Itoa(backend.PID),
+			"resource_raw_file": localResourceFile,
+		}
+	}
+
+	row := ResultRow{
+		"pair_id":           pairID(endpoint, vus, repetition),
+		"architecture":      arch.Name,
+		"endpoint":          endpoint,
+		"vus":               strconv.Itoa(vus),
+		"duration":          cfg.Duration,
+		"repetition":        strconv.Itoa(repetition),
+		"base_url":          arch.BaseURL,
+		"backend_pid":       strconv.Itoa(backend.PID),
+		"resource_raw_file": localResourceFile,
+	}
+
+	for k, v := range k6Result {
+		row[k] = v
+	}
+
+	addResourceSummary(row, resourceSummary)
+
+	return row
+}
+
 func runPprofTop(binaryPath string, profilePath string, outPath string) error {
 	return runCommandToFile(outPath, "go", "tool", "pprof", "-top", binaryPath, profilePath)
 }
@@ -1409,6 +1844,24 @@ func mergeEnv(base []string, overrides map[string]string) []string {
 	return result
 }
 
+func remotePathJoin(parts ...string) string {
+	cleaned := make([]string, 0, len(parts))
+
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		part = strings.Trim(part, "/")
+		if part != "" {
+			cleaned = append(cleaned, part)
+		}
+	}
+
+	if len(cleaned) == 0 {
+		return "/"
+	}
+
+	return "/" + strings.Join(cleaned, "/")
+}
+
 func pairID(endpoint string, vus int, repetition int) string {
 	return fmt.Sprintf("%s_vu%d_rep%d", endpoint, vus, repetition)
 }
@@ -1517,4 +1970,61 @@ func fmtFloat(value float64) string {
 func fatal(err error) {
 	fmt.Fprintln(os.Stderr, "[FATAL]", err)
 	os.Exit(1)
+}
+
+func sshArgs(cfg RunnerConfig) []string {
+	args := []string{
+		"-o", "BatchMode=yes",
+		"-o", "StrictHostKeyChecking=accept-new",
+	}
+
+	if strings.TrimSpace(cfg.SSHKey) != "" {
+		args = append(args, "-i", cfg.SSHKey)
+	}
+	return args
+}
+
+func runSSH(cfg RunnerConfig, remoteCommand string) (string, error) {
+	target := fmt.Sprintf("%s@%s", cfg.VMUser, cfg.VMHost)
+
+	args := sshArgs(cfg)
+	args = append(args, target, "bash", "-lc", remoteCommand)
+
+	cmd := exec.Command("ssh", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return string(out), fmt.Errorf("ssh failed: %w\n%s", err, string(out))
+	}
+
+	return string(out), nil
+}
+
+func runSCPFromVM(cfg RunnerConfig, remotePath string, localPath string) error {
+	if err := os.MkdirAll(filepath.Dir(localPath), 0755); err != nil {
+		return err
+	}
+
+	target := fmt.Sprintf("%s@%s:%s", cfg.VMUser, cfg.VMHost, remotePath)
+
+	args := sshArgs(cfg)
+	args = append(args, target, localPath)
+
+	cmd := exec.Command("scp", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("scp failed: %w\n%s", err, string(out))
+	}
+	return nil
+}
+
+func shQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
+}
+
+func filepathDirRemote(path string) string {
+	idx := strings.LastIndex(path, "/")
+	if idx <= 0 {
+		return "/"
+	}
+	return path[:idx]
 }
