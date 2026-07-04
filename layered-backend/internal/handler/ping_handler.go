@@ -11,5 +11,7 @@ func (h *PingHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method tidak diizinkan")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "200 OK (Healthy)", "service": "layered-backend"})
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status": "ok",
+	})
 }
