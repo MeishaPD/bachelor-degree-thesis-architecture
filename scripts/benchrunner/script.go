@@ -935,13 +935,14 @@ func startBackendRemote(cfg RunnerConfig, arch ArchConfig) (*RemoteBackendProces
 	cmd := strings.Join([]string{
 		"mkdir -p " + shQuote(pidDir) + " " + shQuote(logDir),
 		"if [ -f " + shQuote(pidPath) + " ]; then kill $(cat " + shQuote(pidPath) + ") 2>/dev/null || true; rm -f " + shQuote(pidPath) + "; fi",
+		"sleep 1",
 		"cd " + shQuote(arch.RemoteWorkDir),
-		"env " +
+		"(env " +
 			"PORT=" + shQuote(arch.Port) + " " +
 			"PPROF_ADDR=" + shQuote(arch.RemotePprofAddr) + " " +
 			"DATABASE_URL=" + shQuote(cfg.DatabaseURL) + " " +
 			"PRODUCT_SEED_PATH=" + shQuote(cfg.ProductSeedPath) + " " +
-			"nohup " + shQuote(arch.RemoteBinary) + " > " + shQuote(logPath) + " 2>&1 < /dev/null & echo $! > " + shQuote(pidPath),
+			"nohup " + shQuote(arch.RemoteBinary) + " > " + shQuote(logPath) + " 2>&1 < /dev/null & echo $! > " + shQuote(pidPath) + ")",
 		"sleep 0.3",
 		"cat " + shQuote(pidPath),
 	}, " && ")
@@ -992,12 +993,12 @@ func startRemoteMonitor(cfg RunnerConfig, backendPID int, remoteOutPath string, 
 	cmd := strings.Join([]string{
 		"mkdir -p " + shQuote(pidDir) + " " + shQuote(logDir) + " " + shQuote(filepathDirRemote(remoteOutPath)),
 		"if [ -f " + shQuote(pidPath) + " ]; then kill $(cat " + shQuote(pidPath) + ") 2>/dev/null || true; rm -f " + shQuote(pidPath) + "; fi",
-		"nohup " + shQuote(cfg.RemoteRunner) +
+		"(nohup " + shQuote(cfg.RemoteRunner) +
 			" -mode monitor" +
 			" -monitor-pid " + strconv.Itoa(backendPID) +
 			" -monitor-out " + shQuote(remoteOutPath) +
 			" -monitor-interval " + shQuote(cfg.MonitorInterval.String()) +
-			" > " + shQuote(logPath) + " 2>&1 < /dev/null & echo $! > " + shQuote(pidPath),
+			" > " + shQuote(logPath) + " 2>&1 < /dev/null & echo $! > " + shQuote(pidPath) + ")",
 		"sleep 0.3",
 		"cat " + shQuote(pidPath),
 	}, " && ")
@@ -1988,7 +1989,7 @@ func runSSH(cfg RunnerConfig, remoteCommand string) (string, error) {
 	target := fmt.Sprintf("%s@%s", cfg.VMUser, cfg.VMHost)
 
 	args := sshArgs(cfg)
-	args = append(args, target, "bash", "-lc", remoteCommand)
+	args = append(args, target, "bash -lc "+shQuote(remoteCommand))
 
 	cmd := exec.Command("ssh", args...)
 	out, err := cmd.CombinedOutput()
