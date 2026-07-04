@@ -414,7 +414,7 @@ func parseConfig() (RunnerConfig, error) {
 	vmUser := flag.String("vm-user", envOrDefault("VM_USER", "sandbox"), "SSH user for remote VM")
 	vmHost := flag.String("vm-host", envOrDefault("VM_HOST", ""), "VM host-only IP address")
 	vmRoot := flag.String("vm-root", envOrDefault("VM_ROOT", "/home/sandbox/thesis-go-architecture-refactored"), "Root directory of the project on remote VM")
-	vmResultDir := flag.String("vm-result-dir", envOrDefault("VM_RESULT_DIR", "/home/sandbox/thesis-go-architecture-refactored/results"), "Result directory on remote VM")
+	vmResultDir := flag.String("vm-resultdir", envOrDefault("VM_RESULTDIR", "/home/sandbox/thesis-go-architecture-refactored/results"), "Result directory on remote VM")
 	remoteRunner := flag.String("remote-runner", envOrDefault("REMOTE_RUNNER", "/home/sandbox/thesis-go-architecture-refactored/bin/benchmark-runner"), "Path to benchmark-runner binary on remote VM")
 	sshKey := flag.String("ssh-key", envOrDefault("SSH_KEY", ""), "Optional SSH private key path")
 	monitorPID := flag.Int("monitor-pid", 0, "PID to monitor when running -mode monitor")
