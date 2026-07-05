@@ -593,6 +593,7 @@ func buildBackend(arch ArchConfig) error {
 }
 
 func runMeasuredCondition(cfg RunnerConfig, arch ArchConfig, endpoint string, vus int, repetition int) ResultRow {
+	arch.PprofAddr = ""
 	if cfg.Remote {
 		return runMeasuredConditionRemote(cfg, arch, endpoint, vus, repetition)
 	}

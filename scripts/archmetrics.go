@@ -321,6 +321,11 @@ func MeasureStructure(arch string, root string) (StructureMetrics, error) {
 
 			if isInternalProjectImport(importPath, modulePath) {
 				toPackage := internalImportToPackage(importPath, modulePath)
+
+				if shouldSkipDependencyPackage(toPackage) {
+					continue
+				}
+
 				internalDependencies.Add(fromPackage + " -> " + toPackage)
 			}
 		}
@@ -397,7 +402,8 @@ func MeasureModifiability(scenario string, arch string, root string, baseRef str
 
 		relToArch := path
 		if rootRel != "." && rootRel != "" {
-			relToArch = strings.TrimSuffix(rootRel, "/") + "/"
+			prefix := strings.TrimSuffix(rootRel, "/") + "/"
+			relToArch = strings.TrimPrefix(path, prefix)
 		}
 
 		changedFiles.Add(relToArch)
@@ -673,6 +679,8 @@ func shouldSkipDir(name string) bool {
 		"node_modules",
 		"results",
 		"benchmark-results",
+		"pprof",
+		"observability",
 		"build",
 		"dist",
 		"tmp",
@@ -683,6 +691,19 @@ func shouldSkipDir(name string) bool {
 	default:
 		return false
 	}
+}
+
+func shouldSkipDependencyPackage(packagePath string) bool {
+	packagePath = filepath.ToSlash(packagePath)
+
+	skippedParts := strings.Split(packagePath, "/")
+	for _, part := range skippedParts {
+		if shouldSkipDir(part) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func isProductionGoPath(path string) bool {
@@ -868,10 +889,10 @@ func componentForPath(arch string, path string) string {
 			return "inbound_adapter"
 		case strings.Contains(path, "internal/adapter/outbound"):
 			return "outbound_adapter"
-		case strings.Contains(path, "internal/core/port/input"):
-			return "input_port"
-		case strings.Contains(path, "internal/core/port/output"):
-			return "output_port"
+		case strings.Contains(path, "internal/core/port/inbound"):
+			return "inbound_port"
+		case strings.Contains(path, "internal/core/port/outbound"):
+			return "outbound_port"
 		case strings.Contains(path, "internal/core/port"):
 			return "port"
 		case strings.Contains(path, "internal/core/usecase") || strings.Contains(path, "internal/usecase"):

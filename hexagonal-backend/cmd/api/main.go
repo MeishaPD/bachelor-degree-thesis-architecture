@@ -19,11 +19,13 @@ import (
 func main() {
 	seedPath := getenv("PRODUCT_SEED_PATH", "data/products_seed.json")
 	port := getenv("PORT", "8082")
-	pprofAddr := getenv("PPROF_ADDR", "localhost:6062")
+	pprofAddr := getenv("PPROF_ADDR", "")
 
 	databaseURL := getenv("DATABASE_URL", "postgres://postgres:postMeisha2025.@localhost:5432/hexagonal-skripshit?sslmode=disable")
 
-	observability.StartPprofServer(pprofAddr)
+	if pprofAddr != "" {
+		observability.StartPprofServer(pprofAddr)
+	}
 
 	products, err := seed.LoadProducts(seedPath)
 	if err != nil {
