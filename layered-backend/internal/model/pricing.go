@@ -64,6 +64,13 @@ func (p PricingPolicy) CapDiscount(discount, subtotal int64) int64 {
 	return discount
 }
 
+func (p PricingPolicy) BulkQuantityDiscount(totalQuantity int, subtotal int64) int64 {
+	if totalQuantity >= 10 {
+		return subtotal * 2 / 100
+	}
+	return 0
+}
+
 func (p PricingPolicy) ShippingFee(zone string, subtotal int64) int64 {
 	if subtotal >= p.FreeShippingMin {
 		return 0

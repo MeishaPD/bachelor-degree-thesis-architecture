@@ -25,6 +25,7 @@ func (u *PricingCalculateUseCase) Execute(req inbound.PricingCalculateInput) (in
 
 	var subtotal int64
 	var categoryDiscount int64
+	var totalQuantity int
 
 	for _, item := range req.Items {
 		if item.Quantity <= 0 {
@@ -41,6 +42,7 @@ func (u *PricingCalculateUseCase) Execute(req inbound.PricingCalculateInput) (in
 			return inbound.PricingCalculateOutput{}, fmt.Errorf("product_id %d: %w", item.ProductID, err)
 		}
 
+		totalQuantity += item.Quantity
 		itemSubtotal := orderItem.Subtotal()
 		subtotal += itemSubtotal
 		categoryDiscount += u.policy.CategoryDiscount(product.Category, itemSubtotal)
@@ -48,7 +50,8 @@ func (u *PricingCalculateUseCase) Execute(req inbound.PricingCalculateInput) (in
 
 	tierDiscount := u.policy.TierDiscount(req.CustomerTier, subtotal)
 	voucherDiscount := u.policy.VoucherDiscount(req.VoucherCode, subtotal)
-	totalDiscount := u.policy.CapDiscount(tierDiscount+categoryDiscount+voucherDiscount, subtotal)
+	bulkDiscount := u.policy.BulkDiscount(totalQuantity, subtotal)
+	totalDiscount := u.policy.CapDiscount(tierDiscount+categoryDiscount+voucherDiscount+bulkDiscount, subtotal)
 
 	taxableBase := subtotal - totalDiscount
 	if taxableBase < 0 {

@@ -39,6 +39,7 @@ func (s *PricingService) Calculate(req PricingCalculateRequest) (model.PricingRe
 
 	var subtotal int64
 	var categoryDiscount int64
+	var totalQuantity int
 
 	for _, item := range req.Items {
 		if item.Quantity <= 0 {
@@ -55,6 +56,7 @@ func (s *PricingService) Calculate(req PricingCalculateRequest) (model.PricingRe
 			return model.PricingResult{}, fmt.Errorf("product_id %d: %w", item.ProductID, err)
 		}
 
+		totalQuantity += item.Quantity
 		itemSubtotal := orderItem.Subtotal()
 		subtotal += itemSubtotal
 		categoryDiscount += s.pricingPolicy.CategoryDiscount(product.Category, itemSubtotal)
@@ -62,7 +64,8 @@ func (s *PricingService) Calculate(req PricingCalculateRequest) (model.PricingRe
 
 	tierDiscount := s.pricingPolicy.TierDiscount(req.CustomerTier, subtotal)
 	voucherDiscount := s.pricingPolicy.VoucherDiscount(req.VoucherCode, subtotal)
-	totalDiscount := s.pricingPolicy.CapDiscount(tierDiscount+categoryDiscount+voucherDiscount, subtotal)
+	bulkDiscount := s.pricingPolicy.BulkQuantityDiscount(totalQuantity, subtotal)
+	totalDiscount := s.pricingPolicy.CapDiscount(tierDiscount+categoryDiscount+voucherDiscount+bulkDiscount, subtotal)
 
 	taxableBase := subtotal - totalDiscount
 	if taxableBase < 0 {
