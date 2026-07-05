@@ -9,6 +9,7 @@ import (
 	"thesis/layered-backend/internal/handler"
 	"thesis/layered-backend/internal/model"
 	"thesis/layered-backend/internal/observability"
+	csvrepo "thesis/layered-backend/internal/repository/csv"
 	"thesis/layered-backend/internal/repository/memory"
 	"thesis/layered-backend/internal/repository/postgres"
 	"thesis/layered-backend/internal/router"
@@ -17,19 +18,34 @@ import (
 )
 
 func main() {
+	var catalogRepository service.CatalogReader
+	var err error
+
 	seedPath := getenv("PRODUCT_SEED_PATH", "data/products_seed.json")
 	port := getenv("PORT", "8081")
 	pprofAddr := getenv("PPROF_ADDR", "")
 
 	databaseURL := getenv("DATABASE_URL", "postgres://postgres:postMeisha2025.@localhost:5432/hexagonal-skripshit?sslmode=disable")
 
-	if pprofAddr != "" {
-		observability.StartPprofServer(pprofAddr)
+	catalogSource := getenv("PRODUCT_CATALOG_SOURCE", "json")
+	csvPath := getenv("PRODUCT_CSV_PATH", "data/products_seed.csv")
+
+	switch catalogSource {
+	case "csv":
+		catalogRepository, err = csvrepo.NewCatalogRepository(csvPath)
+		if err != nil {
+			log.Fatalf("load csv catalog: %v", err)
+		}
+	default:
+		products, err := seed.LoadProducts(seedPath)
+		if err != nil {
+			log.Fatalf("load seed products: %v", err)
+		}
+		catalogRepository = memory.NewCatalogRepository(products)
 	}
 
-	products, err := seed.LoadProducts(seedPath)
-	if err != nil {
-		log.Fatalf("load seed products: %v", err)
+	if pprofAddr != "" {
+		observability.StartPprofServer(pprofAddr)
 	}
 
 	db, err := dbconn.OpenPostgresPool(databaseURL)
@@ -38,7 +54,6 @@ func main() {
 	}
 	defer db.Close()
 
-	catalogRepository := memory.NewCatalogRepository(products)
 	pricingPolicy := model.NewDefaultPricingPolicy()
 
 	productRepository := postgres.NewProductRepository(db)

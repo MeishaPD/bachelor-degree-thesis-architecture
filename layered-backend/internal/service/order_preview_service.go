@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"thesis/layered-backend/internal/model"
-	"thesis/layered-backend/internal/repository/memory"
 )
 
 type OrderPreviewRequest struct {
@@ -14,12 +13,12 @@ type OrderPreviewRequest struct {
 }
 
 type OrderPreviewService struct {
-	catalog *memory.CatalogRepository
+	catalog CatalogReader
 	policy  model.PricingPolicy
 }
 
 func NewOrderPreviewService(
-	catalog *memory.CatalogRepository,
+	catalog CatalogReader,
 	policy model.PricingPolicy,
 ) *OrderPreviewService {
 	return &OrderPreviewService{catalog: catalog, policy: policy}

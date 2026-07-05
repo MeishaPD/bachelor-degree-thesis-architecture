@@ -6,9 +6,11 @@ import (
 	"os"
 
 	httpadapter "thesis/hexagonal-backend/internal/adapter/inbound/http"
+	csvadapter "thesis/hexagonal-backend/internal/adapter/outbound/csv"
 	"thesis/hexagonal-backend/internal/adapter/outbound/memory"
 	"thesis/hexagonal-backend/internal/adapter/outbound/postgres"
 	"thesis/hexagonal-backend/internal/core/domain"
+	"thesis/hexagonal-backend/internal/core/port/outbound"
 	"thesis/hexagonal-backend/internal/core/usecase"
 	dbconn "thesis/hexagonal-backend/internal/db"
 	"thesis/hexagonal-backend/internal/observability"
@@ -17,19 +19,34 @@ import (
 )
 
 func main() {
+	var catalogAdapter outbound.ProductCatalogReader
+	var err error
+
 	seedPath := getenv("PRODUCT_SEED_PATH", "data/products_seed.json")
 	port := getenv("PORT", "8082")
 	pprofAddr := getenv("PPROF_ADDR", "")
+
+	catalogSource := getenv("PRODUCT_CATALOG_SOURCE", "json")
+	csvPath := getenv("PRODUCT_CSV_PATH", "data/products_seed.csv")
+
+	switch catalogSource {
+	case "csv":
+		catalogAdapter, err = csvadapter.NewCatalogAdapter(csvPath)
+		if err != nil {
+			log.Fatalf("load csv catalog: %v", err)
+		}
+	default:
+		products, err := seed.LoadProducts(seedPath)
+		if err != nil {
+			log.Fatalf("load seed products: %v", err)
+		}
+		catalogAdapter = memory.NewCatalogAdapter(products)
+	}
 
 	databaseURL := getenv("DATABASE_URL", "postgres://postgres:postMeisha2025.@localhost:5432/hexagonal-skripshit?sslmode=disable")
 
 	if pprofAddr != "" {
 		observability.StartPprofServer(pprofAddr)
-	}
-
-	products, err := seed.LoadProducts(seedPath)
-	if err != nil {
-		log.Fatalf("load seed products: %v", err)
 	}
 
 	db, err := dbconn.OpenPostgresPool(databaseURL)
@@ -38,7 +55,6 @@ func main() {
 	}
 	defer db.Close()
 
-	catalogAdapter := memory.NewCatalogAdapter(products)
 	pricingPolicy := domain.NewDefaultPricingPolicy()
 
 	productRepository := postgres.NewProductRepository(db)

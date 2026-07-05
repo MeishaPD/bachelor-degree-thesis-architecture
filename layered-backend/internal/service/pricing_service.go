@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"thesis/layered-backend/internal/model"
-	"thesis/layered-backend/internal/repository/memory"
 )
 
 type OrderItemRequest struct {
@@ -21,12 +20,12 @@ type PricingCalculateRequest struct {
 }
 
 type PricingService struct {
-	catalog       *memory.CatalogRepository
+	catalog       CatalogReader
 	pricingPolicy model.PricingPolicy
 }
 
 func NewPricingService(
-	catalog *memory.CatalogRepository,
+	catalog CatalogReader,
 	pricingPolicy model.PricingPolicy,
 ) *PricingService {
 	return &PricingService{catalog: catalog, pricingPolicy: pricingPolicy}
