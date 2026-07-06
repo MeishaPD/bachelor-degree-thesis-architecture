@@ -44,22 +44,25 @@ func main() {
 	productRepository := postgres.NewProductRepository(db)
 	orderRepository := postgres.NewOrderRepository(db)
 	customerRepository := postgres.NewCustomerRepository(db)
+	salesAnalyticsRepository := postgres.NewSalesAnalyticsRepository(db)
 
 	orderPreviewUseCase := usecase.NewOrderPreviewUseCase(catalogAdapter, pricingPolicy)
 	orderStatusUseCase := usecase.NewOrderStatusUseCase(orderRepository)
 	pricingUseCase := usecase.NewPricingCalculateUseCase(catalogAdapter, pricingPolicy)
 	productUseCase := usecase.NewProductUseCase(productRepository)
 	customerUseCase := usecase.NewCustomerOrderSummaryUseCase(customerRepository)
+	salesAnalyticsUseCase := usecase.NewSalesAnalyticsUseCase(salesAnalyticsRepository)
 
 	pingHandler := httpadapter.NewPingHandler()
 	orderHandler := httpadapter.NewOrderHandler(orderPreviewUseCase, orderStatusUseCase)
 	pricingHandler := httpadapter.NewPricingHandler(pricingUseCase)
 	productHandler := httpadapter.NewProductHandler(productUseCase)
 	customerHandler := httpadapter.NewCustomerHandler(customerUseCase)
+	salesAnalyticsHandler := httpadapter.NewSalesAnalyticsHandler(salesAnalyticsUseCase)
 
 	server := &http.Server{
 		Addr:    ":" + port,
-		Handler: router.NewRouter(pingHandler, orderHandler, pricingHandler, productHandler, customerHandler),
+		Handler: router.NewRouter(pingHandler, orderHandler, pricingHandler, productHandler, customerHandler, salesAnalyticsHandler),
 	}
 
 	log.Printf("hexagonal backend running on :%s", port)

@@ -44,22 +44,25 @@ func main() {
 	productRepository := postgres.NewProductRepository(db)
 	orderRepository := postgres.NewOrderRepository(db)
 	customerRepository := postgres.NewCustomerRepository(db)
+	salesAnalyticsRepository := postgres.NewSalesAnalyticsRepository(db)
 
 	orderPreviewService := service.NewOrderPreviewService(catalogRepository, pricingPolicy)
 	orderStatusService := service.NewOrderStatusService(orderRepository)
 	pricingService := service.NewPricingService(catalogRepository, pricingPolicy)
 	productService := service.NewProductService(productRepository)
 	customerService := service.NewCustomerOrderSummaryService(customerRepository)
+	salesAnalyticsService := service.NewSalesAnalyticsService(salesAnalyticsRepository)
 
 	pingHandler := handler.NewPingHandler()
 	orderHandler := handler.NewOrderHandler(orderPreviewService, orderStatusService)
 	pricingHandler := handler.NewPricingHandler(pricingService)
 	productHandler := handler.NewProductHandler(productService)
 	customerHandler := handler.NewCustomerHandler(customerService)
+	salesAnalyticsHandler := handler.NewSalesAnalyticsHandler(salesAnalyticsService)
 
 	server := &http.Server{
 		Addr:    ":" + port,
-		Handler: router.NewRouter(pingHandler, orderHandler, pricingHandler, productHandler, customerHandler),
+		Handler: router.NewRouter(pingHandler, orderHandler, pricingHandler, productHandler, customerHandler, salesAnalyticsHandler),
 	}
 
 	log.Printf("layered backend running on :%s", port)

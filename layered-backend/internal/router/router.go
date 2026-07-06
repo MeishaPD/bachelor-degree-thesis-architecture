@@ -12,6 +12,7 @@ func NewRouter(
 	pricing *handler.PricingHandler,
 	product *handler.ProductHandler,
 	customer *handler.CustomerHandler,
+	salesAnalytics *handler.SalesAnalyticsHandler,
 ) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /ping", ping.Handle)
@@ -20,5 +21,6 @@ func NewRouter(
 	mux.HandleFunc("GET /products/{id}", product.GetByID)
 	mux.HandleFunc("PUT /orders/{id}/status", order.UpdateStatus)
 	mux.HandleFunc("GET /customers/{id}/order-summary", customer.GetOrderSummary)
+	mux.HandleFunc("GET /admin/analytics/sales-summary", salesAnalytics.GetSalesSummary)
 	return mux
 }
