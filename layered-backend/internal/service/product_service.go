@@ -3,14 +3,17 @@ package service
 import (
 	"context"
 	"thesis/layered-backend/internal/model"
-	"thesis/layered-backend/internal/repository/postgres"
 )
 
-type ProductService struct {
-	repository *postgres.ProductRepository
+type ProductRepository interface {
+	FindByID(ctx context.Context, id int64) (model.ProductDetail, error)
 }
 
-func NewProductService(repository *postgres.ProductRepository) *ProductService {
+type ProductService struct {
+	repository ProductRepository
+}
+
+func NewProductService(repository ProductRepository) *ProductService {
 	return &ProductService{repository: repository}
 }
 

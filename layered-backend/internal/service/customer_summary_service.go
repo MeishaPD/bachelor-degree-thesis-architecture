@@ -4,14 +4,17 @@ import (
 	"context"
 
 	"thesis/layered-backend/internal/model"
-	"thesis/layered-backend/internal/repository/postgres"
 )
 
-type CustomerOrderSummaryService struct {
-	repository *postgres.CustomerRepository
+type CustomerRepository interface {
+	GetOrderSummary(ctx context.Context, customerID int64) (model.CustomerOrderSummary, error)
 }
 
-func NewCustomerOrderSummaryService(repository *postgres.CustomerRepository) *CustomerOrderSummaryService {
+type CustomerOrderSummaryService struct {
+	repository CustomerRepository
+}
+
+func NewCustomerOrderSummaryService(repository CustomerRepository) *CustomerOrderSummaryService {
 	return &CustomerOrderSummaryService{repository: repository}
 }
 

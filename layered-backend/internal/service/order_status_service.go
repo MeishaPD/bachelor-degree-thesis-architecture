@@ -5,14 +5,17 @@ import (
 	"errors"
 
 	"thesis/layered-backend/internal/model"
-	"thesis/layered-backend/internal/repository/postgres"
 )
 
-type OrderStatusService struct {
-	repository *postgres.OrderRepository
+type OrderRepository interface {
+	UpdateStatus(ctx context.Context, orderID int64, status string) error
 }
 
-func NewOrderStatusService(repository *postgres.OrderRepository) *OrderStatusService {
+type OrderStatusService struct {
+	repository OrderRepository
+}
+
+func NewOrderStatusService(repository OrderRepository) *OrderStatusService {
 	return &OrderStatusService{repository: repository}
 }
 

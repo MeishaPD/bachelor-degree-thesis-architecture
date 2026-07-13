@@ -4,13 +4,13 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	httpadapter "thesis/hexagonal-backend/internal/adapter/inbound/http"
 	"thesis/hexagonal-backend/internal/adapter/outbound/memory"
-	"thesis/hexagonal-backend/internal/adapter/outbound/postgres"
+	restadapter "thesis/hexagonal-backend/internal/adapter/outbound/rest"
 	"thesis/hexagonal-backend/internal/core/domain"
 	"thesis/hexagonal-backend/internal/core/usecase"
-	dbconn "thesis/hexagonal-backend/internal/db"
 	"thesis/hexagonal-backend/internal/observability"
 	"thesis/hexagonal-backend/internal/router"
 	"thesis/hexagonal-backend/internal/seed"
@@ -20,8 +20,8 @@ func main() {
 	seedPath := getenv("PRODUCT_SEED_PATH", "data/products_seed.json")
 	port := getenv("PORT", "8082")
 	pprofAddr := getenv("PPROF_ADDR", "")
-
-	databaseURL := getenv("DATABASE_URL", "postgres://postgres:postMeisha2025.@localhost:5432/hexagonal-skripshit?sslmode=disable")
+	supabaseURL := getenv("SUPABASE_URL", "")
+	supabaseAPIKey := getenv("SUPABASE_API_KEY", "")
 
 	if pprofAddr != "" {
 		observability.StartPprofServer(pprofAddr)
@@ -32,18 +32,23 @@ func main() {
 		log.Fatalf("load seed products: %v", err)
 	}
 
-	db, err := dbconn.OpenPostgresPool(databaseURL)
+	restClient, err := restadapter.NewClient(
+		&http.Client{
+			Timeout: 5 * time.Second,
+		},
+		supabaseURL,
+		supabaseAPIKey,
+	)
 	if err != nil {
-		log.Fatalf("connect postgres: %v", err)
+		log.Fatalf("initialize Supabase client: %v", err)
 	}
-	defer db.Close()
 
 	catalogAdapter := memory.NewCatalogAdapter(products)
 	pricingPolicy := domain.NewDefaultPricingPolicy()
 
-	productRepository := postgres.NewProductRepository(db)
-	orderRepository := postgres.NewOrderRepository(db)
-	customerRepository := postgres.NewCustomerRepository(db)
+	productRepository := restadapter.NewProductRepository(restClient)
+	orderRepository := restadapter.NewOrderRepository(restClient)
+	customerRepository := restadapter.NewCustomerRepository(restClient)
 
 	orderPreviewUseCase := usecase.NewOrderPreviewUseCase(catalogAdapter, pricingPolicy)
 	orderStatusUseCase := usecase.NewOrderStatusUseCase(orderRepository)

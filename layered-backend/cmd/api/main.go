@@ -4,13 +4,13 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
-	dbconn "thesis/layered-backend/internal/db"
 	"thesis/layered-backend/internal/handler"
 	"thesis/layered-backend/internal/model"
 	"thesis/layered-backend/internal/observability"
 	"thesis/layered-backend/internal/repository/memory"
-	"thesis/layered-backend/internal/repository/postgres"
+	restrepository "thesis/layered-backend/internal/repository/rest"
 	"thesis/layered-backend/internal/router"
 	"thesis/layered-backend/internal/seed"
 	"thesis/layered-backend/internal/service"
@@ -20,8 +20,8 @@ func main() {
 	seedPath := getenv("PRODUCT_SEED_PATH", "data/products_seed.json")
 	port := getenv("PORT", "8081")
 	pprofAddr := getenv("PPROF_ADDR", "")
-
-	databaseURL := getenv("DATABASE_URL", "postgres://postgres:postMeisha2025.@localhost:5432/hexagonal-skripshit?sslmode=disable")
+	supabaseURL := getenv("SUPABASE_URL", "")
+	supabaseAPIKey := getenv("SUPABASE_API_KEY", "")
 
 	if pprofAddr != "" {
 		observability.StartPprofServer(pprofAddr)
@@ -32,18 +32,23 @@ func main() {
 		log.Fatalf("load seed products: %v", err)
 	}
 
-	db, err := dbconn.OpenPostgresPool(databaseURL)
+	restClient, err := restrepository.NewClient(
+		&http.Client{
+			Timeout: 5 * time.Second,
+		},
+		supabaseURL,
+		supabaseAPIKey,
+	)
 	if err != nil {
-		log.Fatalf("connect postgres: %v", err)
+		log.Fatalf("initialize Supabase client: %v", err)
 	}
-	defer db.Close()
 
 	catalogRepository := memory.NewCatalogRepository(products)
 	pricingPolicy := model.NewDefaultPricingPolicy()
 
-	productRepository := postgres.NewProductRepository(db)
-	orderRepository := postgres.NewOrderRepository(db)
-	customerRepository := postgres.NewCustomerRepository(db)
+	productRepository := restrepository.NewProductRepository(restClient)
+	orderRepository := restrepository.NewOrderRepository(restClient)
+	customerRepository := restrepository.NewCustomerRepository(restClient)
 
 	orderPreviewService := service.NewOrderPreviewService(catalogRepository, pricingPolicy)
 	orderStatusService := service.NewOrderStatusService(orderRepository)
